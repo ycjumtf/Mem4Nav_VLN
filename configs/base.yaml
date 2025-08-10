@@ -1,0 +1,148 @@
+
+experiment:
+  name: "Mem4Nav_BaseExperiment"
+  seed: 42
+  device: "cuda"
+  output_dir_root: "./outputs" 
+
+
+logging:
+  level: "INFO" # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # log_file_name: "experiment.log" # Name of the log file, will be placed in experiment's output dir
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  enable_console_logging: True
+
+# Data Handling and Loaders (for data_handling/)
+data_handling:
+  dataset_root_path: "./datasets_vln" # Root path where all datasets (Touchdown, Map2Seq) are stored
+  max_instruction_length: 128         # Max length for tokenized instructions
+  batch_size: 32                      # Default batch size for training
+  eval_batch_size: 16                 # Default batch size for evaluation
+  num_workers: 4                      # Dataloader workers
+
+  # Specific dataset loader configs can be nested if needed, e.g.:
+  # touchdown_loader:
+  #   specific_path: "touchdown_dataset_v1" # Relative to dataset_root_path
+  #   landmarks_file_path: "landmarks/touchdown_landmarks.json" # Relative to dataset_root_path
+  # map2seq_loader:
+  #   specific_path: "map2seq_vln_splits"
+  #   landmarks_file_path: "landmarks/map2seq_landmarks.json"
+
+# Mem4Nav Core Components Configuration
+mem4nav_core:
+ 
+  fused_embedding_dim: 384 # Example: 256 (vf_out) + 128 (unidepth_internal)
+
+  sparse_octree: 
+    world_size: 100.0      # Cubic world edge length
+    max_depth: 16          # Lambda, max depth of octree
+    # embedding_dim is fused_embedding_dim (used internally if octree stored embeddings, but it stores LTM tokens)
+
+  semantic_graph: # For mem4nav_core.spatial_representation.semantic_graph.SemanticGraph
+    node_creation_similarity_threshold: 0.7 # Delta (δ) for creating new graph nodes (L2 dist)
+    alpha_distance_weight: 1.0              # Alpha (α) for edge weighting (Euclidean part)
+    beta_instruction_cost_weight: 0.5       # Beta (β) for edge weighting (instruction cost part)
+
+  long_term_memory: # For mem4nav_core.memory_system.long_term_memory.LongTermMemory
+    # embedding_dim for LTM is mem4nav_core.fused_embedding_dim (this is d_emb for LTM logic)
+    transformer_depth: 6
+    transformer_heads: 8
+    transformer_mlp_ratio: 4.0
+    transformer_dropout: 0.1
+    max_elements: 20000      # Max items in HNSW and internal LTM storage
+    hnsw_ef_construction: 500 # HNSW parameter M from paper (page 15) = 64
+    hnsw_m: 64               # HNSW parameter M from paper (page 15)
+    hnsw_ef_search: 200      # HNSW efSearch (page 15)
+    default_retrieval_k: 3   # m (top-m memories from LTM) (paper page 5, source [76])
+    position_dim: 3          # Dimension of position vectors (e.g., [x,y,z])
+    # Hidden dims for MLP projectors/decoders (example structures)
+    query_projection_hidden_dims: [512]       # Proj([v_t; p_t]) -> LTM token dim (2*d_emb)
+    position_decoder_hidden_dims: [128, 64]   # pi_p: d_emb -> pos_dim
+    descriptor_decoder_hidden_dims: [128]     # pi_d: d_emb -> d_emb (or other desc_dim)
+    # cycle_consistency_v_decoder_hidden_dims: [256] # pi_v: 2*d_emb -> d_emb (defined in LTM class itself)
+
+  short_term_memory: # For mem4nav_core.memory_system.short_term_memory.ShortTermMemory
+    capacity: 128            # K, max STM entries (paper page 5, source [81])
+    eviction_lambda: 0.5     # Lambda (λ) for eviction score (balances freq/recency)
+
+  memory_retrieval: # For mem4nav_core.memory_system.memory_retrieval.MemoryRetrieval
+    stm_retrieval_spatial_radius: 3.0 # Epsilon (ε) for STM spatial filter (paper page 6, source [85])
+    stm_retrieval_k: 3                # Top-k STM entries to consider after spatial filter
+    stm_similarity_threshold: 0.7     # Tau (τ) similarity threshold to use STM over LTM (paper page 6)
+
+  perception_processing: # For mem4nav_core.perception_processing.feature_utils & agent perception modules
+    # (Used by MultimodalFeatureProcessor)
+    visual_frontend_output_dim: 256 # Output dimension of v_rgb (from ResNet50+ViT)
+    unidepth_model_path: "path/to/external_models/unidepth/unidepth_weights.pth" # CRITICAL: Update this path
+    unidepth_internal_feature_dim: 128 # Output dimension of v_depth
+
+
+
+# Training Configuration (for training_utils/)
+training:
+  checkpoint_dir_template: "{output_dir_root}/{experiment_name}/checkpoints"
+  log_interval: 100  # Log training stats every N batches
+  eval_interval_epochs: 1 # Perform validation every N epochs (during Phase 3)
+  primary_val_metric: "SPL" # Metric to monitor for saving best checkpoint (e.g., SPL, TC)
+  higher_is_better_val_metric: True
+
+  # Default optimizer and scheduler (can be overridden per phase)
+  optimizer:
+    name: "adamw"
+    lr: 1e-4
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    no_decay_keywords: ["bias", "LayerNorm.weight", "norm.weight"] # Common for VLN/Transformers
+
+  scheduler:
+    name: "cosine_warmup" # Example: "steplr", "cosine_annealing", "linear_warmup"
+    # For steplr:
+    # step_size: 30
+    # gamma: 0.1
+    # For cosine_annealing:
+    # T_max_ratio: 1.0 # Ratio of total training steps for T_max, or set T_max directly
+    # eta_min: 0.0
+    # For warmup schedulers (linear_warmup, cosine_warmup):
+    num_warmup_steps_ratio: 0.05 # 5% of total steps for warmup
+
+  # Phase-specific training configurations
+  phases:
+    phase1_visual: # Visual Frontend Fine-tuning
+      enabled: False # Default to False as it requires specific data/setup
+      epochs: 10
+      # optimizer, scheduler can override global ones here
+      # loss_specific_params (e.g. for masked reconstruction)
+      # grad_clip_norm: 1.0
+
+    phase2_ltm: # LTM Reversible Transformer Pre-training
+      enabled: False # Default to False, requires synthetic trajectory data
+      epochs: 5
+      # optimizer, scheduler for LTM components
+      # grad_clip_norm: 1.0
+      # Dataloader for synthetic trajectories needs to be specified in experiment config
+
+    phase3_e2e_nav: # End-to-End Navigation Fine-tuning
+      enabled: True # Usually the main training phase
+      epochs: 30
+      # optimizer, scheduler for the E2E agent
+      grad_clip_norm: 1.0
+      gradient_accumulation_steps: 1
+      use_cycle_loss_in_phase3: True # Whether to jointly train with L_cycle
+      freeze_visual_backbone_in_phase3: False # If true, only train ViT head + policy + memory parts
+
+  # Loss weights (for CombinedAgentLoss)
+  nav_loss_weight: 1.0
+  cycle_loss_weight: 0.1 # As an example, can be tuned
+
+# Evaluation Configuration (for evaluation_utils/)
+evaluation:
+  max_episode_steps: 100
+  success_threshold_m: 3.0 # For TC and SPL success definition
+  # For evaluator's internal simulation if needed:
+  control_params: # Mirrored from what ControlModule might use
+    default_step_distance: 1.0
+    default_turn_angle_rad: 0.523599 # 30 degrees in radians
+

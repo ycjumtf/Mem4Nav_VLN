@@ -1,0 +1,71 @@
+# --- FLAME + Mem4Nav on Map2Seq Dataset ---
+
+# Experiment identifier
+experiment:
+  name: "Mem4Nav_FLAME_Map2Seq_Run1"
+  # Inherits seed, device, output_dir_root from base.yaml unless overridden
+
+# Data Handling (specific to Map2Seq for FLAME)
+data_handling:
+  dataset_name: "map2seq"
+  map2seq_loader: # Specific settings for Map2SeqLoader
+    specific_path: "map2seq_vln_splits" # Relative to dataset_root_path (e.g., ./datasets_vln/map2seq_vln_splits)
+    # landmarks_file_path: "landmarks/map2seq_landmarks_gpt3_5shot.json" # Example, relative to dataset_root_path
+  max_instruction_length: 150 # Adjusted for Map2Seq
+  # batch_size, eval_batch_size, num_workers can be inherited or overridden
+
+# Mem4Nav Core Components Configuration
+# Inherits most from base.yaml. Ensure fused_embedding_dim and unidepth_model_path are correct.
+mem4nav_core:
+  fused_embedding_dim: 384 # Example: 256 (vf_out) + 128 (unidepth_internal_feature_dim)
+  perception_processing:
+    unidepth_model_path: "path/to/your/unidepth_weights.pth" # CRITICAL: User must update
+    # visual_frontend_output_dim and unidepth_internal_feature_dim are inherited from base or set here to match fused_embedding_dim
+    # camera_intrinsics can be inherited or specified if Map2Seq uses different conventions
+
+# Agent Configuration: FLAME specific
+agents:
+  flame_agent:
+    flame_model_path: "path/to/pretrained/flame_model_checkpoint" # CRITICAL: User must update
+    flame_h_prev_dim: 4096    # LLaMA-7B hidden size for specialized LTM query
+    flame_f_bar_t_dim: 1024   # Pooled vision encoder output dim for specialized LTM query
+    flame_vis_latent_dim: 1024 # FLAME's visual latent dimension for memory token projection
+    flame_feature_as_input: True # If FLAME expects pre-extracted visual features
+    # flame_num_visual_tokens, flame_raw_patch_dim if feature_as_input=True
+
+    perception: # Config for PerceptionModule used by FlameMem4NavAgent
+      multimodal_feature_processor:
+        vf_output_dim: 256 # Contributes to mem4nav_core.fused_embedding_dim
+        unidepth_internal_feature_dim: 128 # Contributes to mem4nav_core.fused_embedding_dim
+        # camera_intrinsics: (specific to data source if needed)
+
+    mapping:
+      enable_graph_node_ltm: True
+
+# Training Configuration (overrides/extends base.yaml)
+training:
+  optimizer:
+    lr: 5e-5 # Example fine-tuning LR for FLAME
+  scheduler:
+    name: "cosine_warmup"
+    num_warmup_steps_ratio: 0.03
+  
+  phases:
+    phase1_visual:
+      enabled: False # Assume FLAME's visual encoder is pre-trained
+    phase2_ltm:
+      enabled: True # Pre-train Mem4Nav's LTM components
+      epochs: 5
+      optimizer: { lr: 1e-4 }
+    phase3_e2e_nav:
+      enabled: True
+      epochs: 25 # Adjusted for Map2Seq fine-tuning
+      grad_clip_norm: 1.0
+      gradient_accumulation_steps: 4
+      use_cycle_loss_in_phase3: True
+      cycle_loss_weight: 0.05
+
+# Evaluation Configuration (overrides/extends base.yaml)
+evaluation:
+  max_episode_steps: 70 # Map2Seq episodes characteristics
+  # success_threshold_m inherited

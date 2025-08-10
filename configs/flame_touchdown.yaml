@@ -1,0 +1,100 @@
+
+# Experiment identifier (overrides base.yaml)
+experiment:
+  name: "Mem4Nav_FLAME_Touchdown_Run1"
+  # seed, device, output_dir_root can be inherited from base.yaml or overridden here
+
+# Logging (can inherit or override from base.yaml)
+# logging:
+#   level: "DEBUG" # Example override
+#   log_file_name: "flame_touchdown_experiment.log"
+
+# Data Handling (specific to Touchdown for FLAME)
+data_handling:
+  # dataset_root_path is inherited from base.yaml
+  dataset_name: "touchdown" # Explicitly set for clarity
+  touchdown_loader: # Specific settings for TouchdownLoader
+    specific_path: "touchdown" # Relative to dataset_root_path, e.g., ./datasets_vln/touchdown
+    # Path to pre-extracted landmarks for Touchdown (if used, relative to dataset_root_path)
+    # landmarks_file_path: "landmarks/touchdown_landmarks_gpt3_5shot.json" # [cite: 1] (example path)
+  # max_instruction_length, batch_size, etc., can be inherited or overridden
+
+# Mem4Nav Core Components Configuration
+# Most mem4nav_core settings can be inherited from base.yaml.
+# Key parameter to ensure consistency: mem4nav_core.fused_embedding_dim
+# This is the dimension of v_t = [v_rgb; v_depth]
+# It's used as ltm_embedding_dim and stm_embedding_dim internally by MemoryRetrieval
+mem4nav_core:
+  fused_embedding_dim: 384 # Example: 256 (vf_out) + 128 (unidepth_internal_feature_dim)
+  # Other mem4nav settings like octree_depth, lt_depth can be fine-tuned here if needed.
+  perception_processing:
+    # vf_output_dim and unidepth_internal_feature_dim in base.yaml contribute to fused_embedding_dim
+    unidepth_model_path: "path/to/your/unidepth_weights.pth" # CRITICAL: User must update
+
+# Agent Configuration: FLAME specific
+agents:
+  flame_agent: # Matches the key for FlameMem4NavAgent config
+    flame_model_path: "path/to/pretrained/flame_model_checkpoint" # CRITICAL: User must update [cite: 850, 858]
+    # Parameters for FLAME's specialized memory query MLP: MLP([h_prev; f_bar_t]) -> LTM query
+    flame_h_prev_dim: 4096    # Example: LLaMA-7B hidden size
+    flame_f_bar_t_dim: 1024   # Example: Pooled output dim of FLAME's vision encoder (e.g., CLIP-L ResNet50 output)
+    
+    # Dimension of FLAME's visual latents (output of Perceiver, D_vis)
+    # Memory tokens will be projected to this dimension.
+    flame_vis_latent_dim: 1024 # Example, from Flamingo architecture [cite: 548]
+    
+    # How FLAME's vision_x is handled (refer to FLAME codebase)
+    # If True, expect pre-extracted patch features. If False, raw image tensors.
+    flame_feature_as_input: True # [cite: 546, 552, 722, 816, 860, 865]
+    flame_num_visual_tokens: 50 # Example: 49 patches + 1 CLS, if feature_as_input=True
+    flame_raw_patch_dim: 1024   # Example: If feature_as_input=True
+
+    # Perception module settings (used by FlameMem4NavAgent to get v_t for Mem4Nav)
+    perception:
+      multimodal_feature_processor:
+        vf_output_dim: 256 # Contributes to mem4nav_core.fused_embedding_dim
+        unidepth_internal_feature_dim: 128 # Contributes to mem4nav_core.fused_embedding_dim
+        camera_intrinsics: {'fx': 256.0, 'fy': 256.0, 'cx': 160.0, 'cy': 120.0} # Example for 320x240 input to MFP
+
+    # Mapping module settings (e.g., if graph node LTM is enabled)
+    mapping:
+      enable_graph_node_ltm: True
+
+    # Policy related action space (FLAME decodes actions from text)
+    # This might not be a fixed list if FLAME generates free-form text actions.
+    # However, for evaluation, we often map generated text to a discrete set.
+    # action_space: ["forward", "turn_left", "turn_right", "stop"] # Defined in agent code
+
+# Training Configuration (overrides/extends base.yaml)
+training:
+  # checkpoint_dir_template will use experiment.name from above
+  optimizer:
+    lr: 5e-5 # Potentially different LR for FLAME fine-tuning
+    # Other optimizer params can be inherited or overridden
+  scheduler:
+    name: "cosine_warmup"
+    num_warmup_steps_ratio: 0.03
+  
+  phases:
+    phase1_visual:
+      enabled: False # FLAME likely uses its own pre-trained vision encoder
+    phase2_ltm:
+      enabled: True # Pre-train Mem4Nav's LTM if not already done
+      epochs: 5
+      optimizer:
+        lr: 1e-4 # Specific LR for LTM pre-training
+    phase3_e2e_nav:
+      enabled: True
+      epochs: 20 # Fine-tuning epochs for FLAME with Mem4Nav
+      grad_clip_norm: 1.0
+      gradient_accumulation_steps: 4 # Adjust based on GPU memory
+      use_cycle_loss_in_phase3: True
+      cycle_loss_weight: 0.05 # Tune weight for LTM cycle loss during E2E
+      # Potentially freeze parts of FLAME model if only training adapters/Mem4Nav components
+      # freeze_flame_backbone: True 
+
+# Evaluation Configuration (overrides/extends base.yaml)
+evaluation:
+  max_episode_steps: 60 # Touchdown episodes can be long
+  # success_threshold_m inherited from base
+  # control_params might not be used if FLAME directly outputs discrete actions

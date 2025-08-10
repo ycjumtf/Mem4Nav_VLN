@@ -1,0 +1,105 @@
+
+experiment:
+  name: "Mem4Nav_ModularPipeline_Map2Seq_Run1"
+  # seed, device, output_dir_root can be inherited from base.yaml or overridden here
+
+# Logging (can inherit or override from base.yaml)
+
+# Data Handling (specific to Map2Seq for Modular Pipeline)
+data_handling:
+  # dataset_root_path is inherited from base.yaml
+  dataset_name: "map2seq" # Explicitly set for clarity
+  map2seq_loader: # Specific settings for Map2SeqLoader
+    specific_path: "map2seq_vln_splits" # Relative to dataset_root_path, e.g., ./datasets_vln/map2seq_vln_splits
+    # Path to pre-extracted landmarks for Map2Seq (if used, relative to dataset_root_path)
+    # landmarks_file_path: "landmarks/map2seq_landmarks_gpt3_5shot.json" # (example path)
+  max_instruction_length: 150 # Map2Seq instructions can be varied
+  batch_size: 16 # For training the policy network
+  eval_batch_size: 8
+
+# Most mem4nav_core settings can be inherited from base.yaml.
+# Ensure mem4nav_core.fused_embedding_dim matches perception output.
+mem4nav_core:
+  fused_embedding_dim: 384 # Example: 256 (vf_out) + 128 (unidepth_internal)
+  sparse_octree:
+    max_depth: 16
+  semantic_graph:
+    node_creation_similarity_threshold: 0.7 # Tunable for Map2Seq's environment density
+    beta_instruction_cost_weight: 0.25
+  long_term_memory:
+    default_retrieval_k: 3
+    max_elements: 18000 # Potentially adjusted for Map2Seq
+  short_term_memory:
+    capacity: 120
+  memory_retrieval:
+    stm_retrieval_spatial_radius: 2.8
+    stm_similarity_threshold: 0.68
+  perception_processing: # Configures MultimodalFeatureProcessor
+    visual_frontend_output_dim: 256
+    unidepth_internal_feature_dim: 128
+    unidepth_model_path: "path/to/your/unidepth_weights.pth" # CRITICAL: User must update
+    camera_intrinsics: {'fx': 256.0, 'fy': 256.0, 'cx': 160.0, 'cy': 120.0} # Example
+
+# Agent Configuration: Modular Pipeline specific
+agents:
+  modular_pipeline_agent: # Matches key for ModularAgent config
+    perception:
+      multimodal_feature_processor:
+        vf_output_dim: ${mem4nav_core.perception_processing.visual_frontend_output_dim}
+        unidepth_internal_feature_dim: ${mem4nav_core.perception_processing.unidepth_internal_feature_dim}
+        unidepth_model_path: ${mem4nav_core.perception_processing.unidepth_model_path}
+        camera_intrinsics: ${mem4nav_core.perception_processing.camera_intrinsics}
+      generate_point_cloud: True
+
+    mapping:
+      enable_graph_node_ltm: True
+      default_instruction_cost: 0.1
+
+    planning:
+      waypoint_reached_threshold: 1.2
+      goal_reached_threshold: 1.8 # Map2Seq might need slightly different thresholds
+
+    control:
+      default_step_distance: 0.5
+      default_turn_angle_rad: 0.523599 # 30 degrees
+      action_list: ["forward", "turn_left", "turn_right", "stop"]
+
+    policy_network:
+      policy_hidden_dim: 256
+
+# Training Configuration (overrides/extends base.yaml)
+training:
+  optimizer:
+    name: "adamw"
+    lr: 1e-4
+  scheduler:
+    name: "cosine_warmup"
+    num_warmup_steps_ratio: 0.1
+
+  phases:
+    phase1_visual:
+      enabled: True # Assuming visual frontend is trained/fine-tuned once for all datasets
+      epochs: 10    # Or set to False if using a globally pre-trained one
+      optimizer: {lr: 5e-5}
+      # Dataloader key for this phase: e.g., "map2seq_panoramas_for_visual_pretrain"
+
+    phase2_ltm:
+      enabled: True # Assuming LTM is pre-trained once or fine-tuned per dataset group
+      epochs: 5
+      optimizer: {lr: 1e-4}
+      # Dataloader key: e.g., "synthetic_trajectories_map2seq"
+
+    phase3_e2e_nav:
+      enabled: True
+      epochs: 35 # Potentially more or less epochs based on dataset size/complexity
+      grad_clip_norm: 1.0
+      gradient_accumulation_steps: 2
+      use_cycle_loss_in_phase3: True
+      cycle_loss_weight: 0.1
+      # freeze_visual_backbone_in_phase3: True
+
+# Evaluation Configuration (overrides/extends base.yaml)
+evaluation:
+  max_episode_steps: 70 
+  success_threshold_m: 3.0 # Standard VLN success
+  # control_params from base.yaml

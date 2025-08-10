@@ -1,0 +1,61 @@
+
+experiment:
+  name: "Mem4Nav_VELMA_Map2Seq_Run1"
+
+  dataset_name: "map2seq"
+  map2seq_loader:
+    specific_path: "map2seq_vln_splits" # Relative to dataset_root_path
+    landmarks_file_path: "landmarks/map2seq_landmarks_gpt3_5shot.json" # Example path
+  max_instruction_length: 150
+  # batch_size, eval_batch_size can be inherited or overridden
+
+# Mem4Nav Core Components Configuration
+# Inherits most from base.yaml. Ensure fused_embedding_dim and unidepth_model_path.
+mem4nav_core:
+  fused_embedding_dim: 384 # Example: 256 (vf_out) + 128 (unidepth_internal_feature_dim)
+  perception_processing:
+    unidepth_model_path: "path/to/your/unidepth_weights.pth" # CRITICAL: User must update
+
+# Agent Configuration: VELMA specific
+agents:
+  velma_agent:
+    llm_model: "meta-llama/Llama-2-7b-hf" # Example, ensure access or use OpenAI
+    # llm_model: "openai/text-davinci-003"
+    hf_auth_token: "YOUR_HUGGINGFACE_TOKEN_HERE" # If using gated HF models
+
+    # Path to VELMA's navigation graph data for Map2Seq
+    # The VELMA codebase (VELMA_codeset.docx, source [8]) uses a path structure like
+    # ./datasets/map2seq_unseen/graph
+    # So, relative to dataset_root_path, this would be:
+    graph_dir: "map2seq_unseen/graph" # Example structure, adjust if your Map2Seq setup differs
+                                      # (e.g., map2seq_seen/graph for seen splits)
+
+    max_llm_prompt_tokens: 2048
+
+    perception: # Config for PerceptionModule used by VelmaMem4NavAgent
+      multimodal_feature_processor:
+        vf_output_dim: 256
+        unidepth_internal_feature_dim: 128
+        # camera_intrinsics: (specific to data source if needed)
+    
+    mapping:
+      enable_graph_node_ltm: True
+
+# Training Configuration
+# As with velma_touchdown.yaml, training might focus on Mem4Nav components if LLM is frozen.
+training:
+  phases:
+    phase1_visual:
+      enabled: False
+    phase2_ltm:
+      enabled: True
+      epochs: 5
+    phase3_e2e_nav:
+      enabled: True # If fine-tuning any part
+      epochs: 10
+      optimizer:
+        lr: 1e-5 # Smaller LR if LLM is involved
+
+# Evaluation Configuration
+evaluation:
+  max_episode_steps: 60 # Adjusted for Map2Seq average episode length

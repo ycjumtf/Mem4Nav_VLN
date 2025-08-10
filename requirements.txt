@@ -1,0 +1,48 @@
+torch==2.1.0+cu118 # Or a version compatible with your CUDA setup, e.g., 2.0.1+cu118 from FLAME
+torchvision==0.16.0+cu118 
+torchaudio==2.1.0+cu118 
+transformers==4.38.2    
+numpy==1.26.4
+scipy==1.11.4         
+PyYAML==6.0.1           
+hnswlib==0.8.0          
+networkx==3.2.1        
+Pillow==10.2.0          
+opencv-python==4.9.0.80 
+tqdm==4.66.2            
+h5py==3.10.0            
+einops==0.7.0          
+sentencepiece==0.2.0   
+protobuf==4.25.3       
+xformers==0.0.23
+tensorboard==2.15.2     
+wandb==0.16.2        
+openai==1.12.0
+deepspeed==0.13.5
+einops==0.8.0
+lmdb==1.4.1
+# Data Processing & Scientific Computing
+pandas==2.2.0
+scikit-learn==1.4.0
+matplotlib==3.8.2
+seaborn==0.13.2
+
+# Deep Learning Utilities
+albumentations==1.4.0  # For image augmentation
+timm==0.9.12          # PyTorch Image Models
+pytorch-lightning==2.2.0
+
+# Utilities
+jupyter==1.0.0
+notebook==7.0.7
+ipython==8.21.0
+pytest==8.0.0        # For testing
+black==24.1.1        # For code formatting
+isort==5.13.2        # For import sorting
+flake8==7.0.0        # For code linting
+
+# Note: If specific versions of UniDepth, VELMA, or FLAME codebases are
+# integrated as submodules and have their own requirements, those might
+# need to be installed separately or their dependencies merged here carefully.
+# This list focuses on the components we are building for Mem4Nav and common
+# dependencies for the described backbones.

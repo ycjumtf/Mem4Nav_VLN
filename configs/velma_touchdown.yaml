@@ -1,0 +1,77 @@
+
+experiment:
+  name: "Mem4Nav_VELMA_Touchdown_Run1"
+  # seed, device, output_dir_root can be inherited from base.yaml or overridden here
+
+
+data_handling:
+  # dataset_root_path is inherited from base.yaml
+  dataset_name: "touchdown"
+  touchdown_loader:
+    specific_path: "touchdown" # Relative to dataset_root_path
+    # Path to pre-extracted landmarks for Touchdown (VELMA uses these)
+    landmarks_file_path: "landmarks/touchdown_landmarks_gpt3_5shot.json" # [cite: 1] (example path)
+  # max_instruction_length, batch_size, etc., can be inherited or overridden
+
+# Mem4Nav Core Components Configuration
+# Most mem4nav_core settings can be inherited from base.yaml.
+# Ensure mem4nav_core.fused_embedding_dim is set correctly.
+mem4nav_core:
+  fused_embedding_dim: 384 # Example: 256 (vf_out) + 128 (unidepth_internal_feature_dim)
+  perception_processing:
+    unidepth_model_path: "path/to/your/unidepth_weights.pth" # CRITICAL: User must update
+
+# Agent Configuration: VELMA specific
+agents:
+  velma_agent: # Matches the key for VelmaMem4NavAgent config
+    # LLM model to use for VELMA (HuggingFace ID or OpenAI model name)
+    llm_model: "meta-llama/Llama-2-7b-hf" # Example local LLM [cite: 6]
+    # llm_model: "openai/text-davinci-003" # Example OpenAI [cite: 3]
+    hf_auth_token: "YOUR_HUGGINGFACE_TOKEN_HERE" # Needed for gated models like Llama2
+    
+    # Path to VELMA's navigation graph data directory (relative to dataset_root_path or absolute)
+    # This is used by VELMA's ClipEnv.
+    graph_dir: "touchdown/graph" # Example: ./datasets_vln/touchdown/graph [cite: 8]
+
+    # Max tokens for the LLM prompt (important for managing context length and cost for API models)
+    max_llm_prompt_tokens: 2048 # [cite: 5] (VELMA uses ~2000 tokens per call)
+
+    # Prompt template prefix for VELMA if different from agent's internal default
+    # prompt_template_prefix: 'Navigate: {instruction_text}\nLandmarks: {landmarks_text}\nMemory: {{mem4nav_memory_cues}}\nHistory:\n'
+    
+    # Perception module settings (used by VelmaMem4NavAgent to get v_t for Mem4Nav)
+    perception:
+      multimodal_feature_processor:
+        vf_output_dim: 256 # Contributes to mem4nav_core.fused_embedding_dim
+        unidepth_internal_feature_dim: 128 # Contributes to mem4nav_core.fused_embedding_dim
+        camera_intrinsics: {'fx': 256.0, 'fy': 256.0, 'cx': 160.0, 'cy': 120.0} # Example
+
+    # Mapping module settings
+    mapping:
+      enable_graph_node_ltm: True # Whether graph nodes also get their own LTM state
+
+# Training Configuration (overrides/extends base.yaml)
+# VELMA is often used in an inference-only mode with pre-trained LLMs, or with LoRA fine-tuning.
+# The Mem4Nav paper primarily evaluates VELMA with Mem4Nav, implying an inference setup or
+# that Mem4Nav components are trained separately and then integrated.
+# If fine-tuning VELMA's LLM (e.g., LoRA) along with Mem4Nav, settings would go here.
+training:
+  # For VELMA, "training" might refer more to the Mem4Nav components if LLM is frozen.
+  phases:
+    phase1_visual:
+      enabled: False # VELMA uses its own visual understanding via LLM processing descriptions or CLIP. Our VF is for Mem4Nav.
+    phase2_ltm:
+      enabled: True # Pre-train Mem4Nav's LTM
+      epochs: 5
+    phase3_e2e_nav:
+      enabled: True # If fine-tuning any part of VELMA or Mem4Nav policy components
+      epochs: 10    # Likely fewer epochs if LLM is largely frozen
+      optimizer:
+        lr: 1e-5  # Typically smaller LR for fine-tuning large models
+      # Potentially only train Mem4Nav decoders (pi_p, pi_d, pi_v) and policy if LLM is frozen.
+      # freeze_llm_in_phase3: True
+
+# Evaluation Configuration (overrides/extends base.yaml)
+evaluation:
+  max_episode_steps: 55 # VELMA default from its scripts [cite: 8]
+  # success_threshold_m inherited from base

@@ -1,0 +1,121 @@
+
+experiment:
+  name: "Mem4Nav_ModularPipeline_Touchdown_Run1"
+  # seed, device, output_dir_root can be inherited from base.yaml or overridden here
+
+
+data_handling:
+  # dataset_root_path is inherited from base.yaml
+  dataset_name: "touchdown"
+  touchdown_loader: # Specific settings for TouchdownLoader
+    specific_path: "touchdown" # Relative to dataset_root_path, e.g., ./datasets_vln/touchdown
+    # landmarks_file_path: "landmarks/touchdown_landmarks_gpt3_5shot.json" # Optional, if used by this modular agent variant
+  max_instruction_length: 120
+  batch_size: 16 # For training the policy network
+  eval_batch_size: 8
+
+
+mem4nav_core:
+  fused_embedding_dim: 384 # Example: 256 (vf_out) + 128 (unidepth_internal)
+  sparse_octree:
+    max_depth: 16
+  semantic_graph:
+    node_creation_similarity_threshold: 0.75 # Tunable
+    beta_instruction_cost_weight: 0.2 # Lower if instruction cost isn't precisely determined
+  long_term_memory:
+    default_retrieval_k: 3
+    max_elements: 15000
+  short_term_memory:
+    capacity: 100
+  memory_retrieval:
+    stm_retrieval_spatial_radius: 2.5
+    stm_similarity_threshold: 0.65
+  perception_processing: # Configures MultimodalFeatureProcessor
+    visual_frontend_output_dim: 256
+    unidepth_internal_feature_dim: 128
+    unidepth_model_path: "path/to/your/unidepth_weights.pth" # CRITICAL: User must update
+    camera_intrinsics: {'fx': 256.0, 'fy': 256.0, 'cx': 160.0, 'cy': 120.0} # Example
+
+# Agent Configuration: Modular Pipeline specific
+agents:
+  modular_pipeline_agent: # Matches key for ModularAgent config
+    perception: # Config for agents.modular_pipeline.perception.PerceptionModule
+      multimodal_feature_processor: # Redundant if global mem4nav_core.perception_processing is used by it.
+                                    # Keeping structure if PerceptionModule needs its own overrides.
+        vf_output_dim: ${mem4nav_core.perception_processing.visual_frontend_output_dim} # Link to global
+        unidepth_internal_feature_dim: ${mem4nav_core.perception_processing.unidepth_internal_feature_dim}
+        unidepth_model_path: ${mem4nav_core.perception_processing.unidepth_model_path}
+        camera_intrinsics: ${mem4nav_core.perception_processing.camera_intrinsics}
+      generate_point_cloud: True # For octree updates via mapping module
+
+    mapping: # Config for agents.modular_pipeline.mapping.MappingModule
+      enable_graph_node_ltm: True # Allow graph nodes to have their own LTM state
+      default_instruction_cost: 0.1 # For semantic graph edge updates
+
+    planning: # Config for agents.modular_pipeline.planning.PlanningModule
+      waypoint_reached_threshold: 1.0 # meters, for advancing semantic plan
+      goal_reached_threshold: 1.5   # meters, for final goal check by planner
+      # If implementing LLM-based landmark extraction for planning:
+      # llm_planner_config:
+      #   model_name: "gpt-3.5-turbo" # Example
+      #   landmark_extraction_prompt_file: "prompts/touchdown_landmarks.txt"
+
+    control: # Config for agents.modular_pipeline.control.ControlModule
+      default_step_distance: 0.5  # meters for "forward" discrete action
+      default_turn_angle_rad: 0.523599 # 30 degrees for "turn_left/right"
+      action_list: ["forward", "turn_left", "turn_right", "stop"]
+
+    policy_network: # Config for the "lightweight policy network"
+      # input_dim is calculated dynamically in ModularAgent:
+      #   vf_out + unidepth_internal + aggregated_mem_dim + waypoint_repr_dim
+      # For now, assume aggregated_mem_dim = fused_embedding_dim, waypoint_repr_dim = 3
+      # policy_input_dim_components:
+      #   fused_embedding: ${mem4nav_core.fused_embedding_dim}
+      #   aggregated_memory: ${mem4nav_core.fused_embedding_dim} # Example, could differ
+      #   waypoint_representation: 3 # E.g., relative [x,y,dist] or direction vector
+      policy_hidden_dim: 256
+      # num_actions derived from control.action_list length
+
+# Training Configuration (overrides/extends base.yaml)
+training:
+  # checkpoint_dir_template uses experiment.name
+  optimizer:
+    name: "adamw"
+    lr: 1e-4 # For policy network and other trainable parts in Phase 3
+  scheduler:
+    name: "cosine_warmup"
+    num_warmup_steps_ratio: 0.1
+
+  phases:
+    phase1_visual: # Visual Frontend Pre-training on masked reconstruction
+      enabled: True # Enable if training visual frontend from scratch/further fine-tuning
+      epochs: 10
+      optimizer:
+        lr: 5e-5
+      # Dataloader for this phase needs to provide panoramas from Touchdown training set.
+      # This would be a different dataloader than the VLN episode loader.
+      # train_dataloader_key_phase1: "touchdown_panoramas_for_visual_pretrain"
+
+    phase2_ltm: # LTM Reversible Transformer Pre-training
+      enabled: True # Enable if LTM components need pre-training
+      epochs: 5
+      optimizer:
+        lr: 1e-4
+      # Dataloader provides synthetic trajectories: (prev_ltm_token_input, observation_embedding)
+      # train_dataloader_key_phase2: "synthetic_trajectories_for_ltm"
+
+    phase3_e2e_nav: # End-to-End Navigation Fine-tuning
+      enabled: True
+      epochs: 30
+      grad_clip_norm: 1.0
+      gradient_accumulation_steps: 2
+      use_cycle_loss_in_phase3: True # Jointly train with L_cycle
+      cycle_loss_weight: 0.1
+      # By default, all agent parameters (policy, LTM decoders/projectors, potentially ViT head) are trained.
+      # freeze_visual_backbone_in_phase3: True # Optionally freeze ResNet part
+
+# Evaluation Configuration (overrides/extends base.yaml)
+evaluation:
+  max_episode_steps: 75 # Touchdown episodes can require more steps
+  success_threshold_m: 3.0 # As per paper
+  # control_params from base.yaml can be used by evaluator's simulation
