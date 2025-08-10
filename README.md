@@ -95,7 +95,7 @@ cd mem4nav_reproduction
 
 
 ### Downloading Pre-trained Models
-Pre-trained models have been provided [here](), please download and extract them to the external_models directory.
+Pre-trained models have been provided [here](https://github.com/tsinghua-fib-lab/Mem4Nav/releases/download/pretrain-models/external_models.zip), please download and extract them to the external_models directory.
 
 1.  **UniDepth**:
 
@@ -171,3 +171,14 @@ python main.py \
   * **`utils/`**: General utilities (`config_parser.py`, `logging_setup.py`, `general_helpers.py`).
   * **`configs/`**: YAML configuration files.
   * **`main.py`**: Main script to run experiments.
+
+## Citation
+If you find this work useful, please cite our paper:
+```latex
+@article{he2025mem4nav,
+  title={Mem4Nav: Boosting Vision-and-Language Navigation in Urban Environments with a Hierarchical Spatial-Cognition Long-Short Memory System},
+  author={He, Lixuan and Dong, Haoyu and Chen, Zhenxing and Yu, Yangcheng and Feng, Jie and Li, Yong},
+  journal={arXiv preprint arXiv:2506.19433},
+  year={2025}
+}
+```
